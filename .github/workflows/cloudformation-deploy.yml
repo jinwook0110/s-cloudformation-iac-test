@@ -1,0 +1,89 @@
+name: CloudFormation デプロイ
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: '実行するアクション'
+        required: true
+        default: 'create'
+        type: choice
+        options:
+          - create
+          - update
+          - delete
+  push:
+    branches: [ main ]
+    paths:
+      - 'infrastructure/cloudformation/**'
+      - 'lambda_functions/**'
+      - '.github/workflows/cloudformation-deploy.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: コードのチェックアウト
+        uses: actions/checkout@v3
+      
+      - name: Pythonのセットアップ
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      
+      - name: AWS認証情報の設定
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-1
+      
+      - name: Lambda関数のパッケージ化とアップロード
+        if: github.event.inputs.action != 'delete'
+        run: |
+          cd lambda_functions/text_to_s3/
+          zip -r ../text_to_s3.zip *
+          cd ../numbers_1_to_1000/
+          zip -r ../numbers_1_to_1000.zip *
+          cd ../numbers_1001_to_2000/
+          zip -r ../numbers_1001_to_2000.zip *
+          cd ../../
+          
+          CODE_BUCKET="code-bucket-$(aws sts get-caller-identity --query Account --output text)"
+          
+          # バケットが存在しない場合は作成
+          aws s3api head-bucket --bucket ${CODE_BUCKET} 2>/dev/null || aws s3 mb s3://${CODE_BUCKET}
+          
+          aws s3 cp lambda_functions/text_to_s3.zip s3://${CODE_BUCKET}/lambda_functions/
+          aws s3 cp lambda_functions/numbers_1_to_1000.zip s3://${CODE_BUCKET}/lambda_functions/
+          aws s3 cp lambda_functions/numbers_1001_to_2000.zip s3://${CODE_BUCKET}/lambda_functions/
+          
+          echo "CODE_BUCKET=${CODE_BUCKET}" >> $GITHUB_ENV
+      
+      - name: CloudFormationスタックの作成
+        if: github.event.inputs.action == 'create'
+        run: |
+          aws cloudformation create-stack \
+            --stack-name demo-stack \
+            --template-body file://infrastructure/cloudformation/template.yaml \
+            --parameters ParameterKey=CodeBucket,ParameterValue=${CODE_BUCKET} \
+            --capabilities CAPABILITY_NAMED_IAM
+            
+          aws cloudformation wait stack-create-complete --stack-name demo-stack
+          
+      - name: CloudFormationスタックの更新
+        if: github.event.inputs.action == 'update'
+        run: |
+          aws cloudformation update-stack \
+            --stack-name demo-stack \
+            --template-body file://infrastructure/cloudformation/template.yaml \
+            --parameters ParameterKey=CodeBucket,ParameterValue=${CODE_BUCKET} \
+            --capabilities CAPABILITY_NAMED_IAM
+            
+          aws cloudformation wait stack-update-complete --stack-name demo-stack
+          
+      - name: CloudFormationスタックの削除
+        if: github.event.inputs.action == 'delete'
+        run: |
+          aws cloudformation delete-stack --stack-name demo-stack
+          aws cloudformation wait stack-delete-complete --stack-name demo-stack

@@ -1,0 +1,140 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'IaC demo with S3 and Step Functions'
+
+Parameters:
+  CodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda function code
+
+Resources:
+  # S3バケット
+  DemoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "demo-bucket-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+
+  # Lambda実行用のIAMロール
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+  # Lambda関数1: テキストファイルをS3に格納
+  TextToS3Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: TextToS3Function
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambda_functions/text_to_s3.zip
+      Timeout: 30
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref DemoBucket
+
+  # Lambda関数2: 1〜1000を出力
+  Numbers1To1000Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: Numbers1To1000Function
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambda_functions/numbers_1_to_1000.zip
+      Timeout: 30
+
+  # Lambda関数3: 1001〜2000を出力
+  Numbers1001To2000Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: Numbers1001To2000Function
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: lambda_functions/numbers_1001_to_2000.zip
+      Timeout: 30
+
+  # Step Functions実行用のIAMロール
+  StepFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+
+  # Step Functions定義
+  DemoStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: DemoWorkflow
+      RoleArn: !GetAtt StepFunctionExecutionRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Demo workflow with S3 and multiple Lambda functions",
+          "StartAt": "StoreTextToS3",
+          "States": {
+            "StoreTextToS3": {
+              "Type": "Task",
+              "Resource": "${TextToS3Function.Arn}",
+              "Next": "ProcessNumbersInParallel"
+            },
+            "ProcessNumbersInParallel": {
+              "Type": "Parallel",
+              "Branches": [
+                {
+                  "StartAt": "Generate1To1000",
+                  "States": {
+                    "Generate1To1000": {
+                      "Type": "Task",
+                      "Resource": "${Numbers1To1000Function.Arn}",
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "Generate1001To2000",
+                  "States": {
+                    "Generate1001To2000": {
+                      "Type": "Task",
+                      "Resource": "${Numbers1001To2000Function.Arn}",
+                      "End": true
+                    }
+                  }
+                }
+              ],
+              "End": true
+            }
+          }
+        }
+
+Outputs:
+  S3BucketName:
+    Description: Name of the created S3 bucket
+    Value: !Ref DemoBucket
+  StateMachineArn:
+    Description: ARN of the Step Functions state machine
+    Value: !Ref DemoStateMachine
