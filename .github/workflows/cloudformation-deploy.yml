@@ -53,14 +53,14 @@ jobs:
             if [ -n "$BUCKET_NAME" ]; then
               echo "S3バケット ${BUCKET_NAME} を完全に空にします..."
               
-              # Pythonを使用してバケットの全オブジェクトを削除
-              python3 << EOF_PYTHON
+              # Python スクリプトを一時ファイルに書き出して実行
+              cat > /tmp/empty_bucket.py << 'EOF_PYTHON'
 import boto3
 import json
-import subprocess
+import os
 
 s3_client = boto3.client('s3')
-bucket_name = '${BUCKET_NAME}'
+bucket_name = os.environ['BUCKET_NAME']
 
 # バージョン付きオブジェクトを一つずつ削除
 print("バージョン付きオブジェクトを削除中...")
@@ -91,6 +91,9 @@ except Exception as e:
 
 print("バケット内のオブジェクトの削除が完了しました")
 EOF_PYTHON
+
+              # スクリプトを実行
+              BUCKET_NAME=${BUCKET_NAME} python3 /tmp/empty_bucket.py
               
               # 通常のオブジェクトも念のため削除
               aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
@@ -164,13 +167,14 @@ EOF_PYTHON
               if [ -n "$BUCKET_NAME" ]; then
                 echo "S3バケット ${BUCKET_NAME} を完全に空にします..."
                 
-                # Pythonを使用してバケットの全オブジェクトを削除
-                python3 << EOF_PYTHON
+                # Python スクリプトを一時ファイルに書き出して実行
+                cat > /tmp/empty_bucket.py << 'EOF_PYTHON'
 import boto3
 import json
+import os
 
 s3_client = boto3.client('s3')
-bucket_name = '${BUCKET_NAME}'
+bucket_name = os.environ['BUCKET_NAME']
 
 # バージョン付きオブジェクトを一つずつ削除
 print("バージョン付きオブジェクトを削除中...")
@@ -201,6 +205,9 @@ except Exception as e:
 
 print("バケット内のオブジェクトの削除が完了しました")
 EOF_PYTHON
+
+                # スクリプトを実行
+                BUCKET_NAME=${BUCKET_NAME} python3 /tmp/empty_bucket.py
                 
                 # 通常のオブジェクトも念のため削除
                 aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
@@ -226,13 +233,14 @@ EOF_PYTHON
               if [ -n "$BUCKET_NAME" ]; then
                 echo "S3バケット ${BUCKET_NAME} を完全に空にします..."
                 
-                # Pythonを使用してバケットの全オブジェクトを削除
-                python3 << EOF_PYTHON
+                # Python スクリプトを一時ファイルに書き出して実行
+                cat > /tmp/empty_bucket.py << 'EOF_PYTHON'
 import boto3
 import json
+import os
 
 s3_client = boto3.client('s3')
-bucket_name = '${BUCKET_NAME}'
+bucket_name = os.environ['BUCKET_NAME']
 
 # バージョン付きオブジェクトを一つずつ削除
 print("バージョン付きオブジェクトを削除中...")
@@ -263,6 +271,9 @@ except Exception as e:
 
 print("バケット内のオブジェクトの削除が完了しました")
 EOF_PYTHON
+
+                # スクリプトを実行
+                BUCKET_NAME=${BUCKET_NAME} python3 /tmp/empty_bucket.py
                 
                 # 通常のオブジェクトも念のため削除
                 aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
@@ -347,13 +358,14 @@ EOF_PYTHON
             if [ -n "$BUCKET_NAME" ]; then
               echo "S3バケット ${BUCKET_NAME} を完全に空にします..."
               
-              # Pythonを使用してバケットの全オブジェクトを削除
-              python3 << EOF_PYTHON
+              # Python スクリプトを一時ファイルに書き出して実行
+              cat > /tmp/empty_bucket.py << 'EOF_PYTHON'
 import boto3
 import json
+import os
 
 s3_client = boto3.client('s3')
-bucket_name = '${BUCKET_NAME}'
+bucket_name = os.environ['BUCKET_NAME']
 
 # バージョン付きオブジェクトを一つずつ削除
 print("バージョン付きオブジェクトを削除中...")
@@ -384,6 +396,9 @@ except Exception as e:
 
 print("バケット内のオブジェクトの削除が完了しました")
 EOF_PYTHON
+
+              # スクリプトを実行
+              BUCKET_NAME=${BUCKET_NAME} python3 /tmp/empty_bucket.py
               
               # 通常のオブジェクトも念のため削除
               aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
