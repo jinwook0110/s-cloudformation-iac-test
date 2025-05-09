@@ -31,6 +31,9 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.12'
+          
+      - name: 依存関係のインストール
+        run: pip install boto3
       
       - name: AWS認証情報の設定
         uses: aws-actions/configure-aws-credentials@v2
@@ -52,48 +55,7 @@ jobs:
             BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
             if [ -n "$BUCKET_NAME" ]; then
               echo "S3バケット ${BUCKET_NAME} を完全に空にします..."
-              
-              # Python スクリプトを一時ファイルに書き出して実行
-              cat > /tmp/empty_bucket.py << 'EOF_PYTHON'
-import boto3
-import json
-import os
-
-s3_client = boto3.client('s3')
-bucket_name = os.environ['BUCKET_NAME']
-
-# バージョン付きオブジェクトを一つずつ削除
-print("バージョン付きオブジェクトを削除中...")
-try:
-    versions = s3_client.list_object_versions(Bucket=bucket_name)
-    
-    # 通常のバージョンを削除
-    if 'Versions' in versions:
-        for version in versions.get('Versions', []):
-            print(f"削除: {version['Key']} (バージョン: {version['VersionId']})")
-            s3_client.delete_object(
-                Bucket=bucket_name,
-                Key=version['Key'],
-                VersionId=version['VersionId']
-            )
-    
-    # 削除マーカーを削除
-    if 'DeleteMarkers' in versions:
-        for marker in versions.get('DeleteMarkers', []):
-            print(f"削除マーカーを削除: {marker['Key']} (バージョン: {marker['VersionId']})")
-            s3_client.delete_object(
-                Bucket=bucket_name,
-                Key=marker['Key'],
-                VersionId=marker['VersionId']
-            )
-except Exception as e:
-    print(f"バケット削除中にエラーが発生しました: {e}")
-
-print("バケット内のオブジェクトの削除が完了しました")
-EOF_PYTHON
-
-              # スクリプトを実行
-              BUCKET_NAME=${BUCKET_NAME} python3 /tmp/empty_bucket.py
+              python scripts/empty_s3_bucket.py ${BUCKET_NAME}
               
               # 通常のオブジェクトも念のため削除
               aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
@@ -112,8 +74,6 @@ EOF_PYTHON
           else
             echo "スタック ${STACK_NAME} は存在しません"
           fi
-          
-          exit 0
       
       - name: Lambda関数のパッケージ化とアップロード
         if: github.event.inputs.action != 'delete' && github.event.inputs.action != 'force-delete'
@@ -166,48 +126,7 @@ EOF_PYTHON
               BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
               if [ -n "$BUCKET_NAME" ]; then
                 echo "S3バケット ${BUCKET_NAME} を完全に空にします..."
-                
-                # Python スクリプトを一時ファイルに書き出して実行
-                cat > /tmp/empty_bucket.py << 'EOF_PYTHON'
-import boto3
-import json
-import os
-
-s3_client = boto3.client('s3')
-bucket_name = os.environ['BUCKET_NAME']
-
-# バージョン付きオブジェクトを一つずつ削除
-print("バージョン付きオブジェクトを削除中...")
-try:
-    versions = s3_client.list_object_versions(Bucket=bucket_name)
-    
-    # 通常のバージョンを削除
-    if 'Versions' in versions:
-        for version in versions.get('Versions', []):
-            print(f"削除: {version['Key']} (バージョン: {version['VersionId']})")
-            s3_client.delete_object(
-                Bucket=bucket_name,
-                Key=version['Key'],
-                VersionId=version['VersionId']
-            )
-    
-    # 削除マーカーを削除
-    if 'DeleteMarkers' in versions:
-        for marker in versions.get('DeleteMarkers', []):
-            print(f"削除マーカーを削除: {marker['Key']} (バージョン: {marker['VersionId']})")
-            s3_client.delete_object(
-                Bucket=bucket_name,
-                Key=marker['Key'],
-                VersionId=marker['VersionId']
-            )
-except Exception as e:
-    print(f"バケット削除中にエラーが発生しました: {e}")
-
-print("バケット内のオブジェクトの削除が完了しました")
-EOF_PYTHON
-
-                # スクリプトを実行
-                BUCKET_NAME=${BUCKET_NAME} python3 /tmp/empty_bucket.py
+                python scripts/empty_s3_bucket.py ${BUCKET_NAME}
                 
                 # 通常のオブジェクトも念のため削除
                 aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
@@ -232,48 +151,7 @@ EOF_PYTHON
               BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
               if [ -n "$BUCKET_NAME" ]; then
                 echo "S3バケット ${BUCKET_NAME} を完全に空にします..."
-                
-                # Python スクリプトを一時ファイルに書き出して実行
-                cat > /tmp/empty_bucket.py << 'EOF_PYTHON'
-import boto3
-import json
-import os
-
-s3_client = boto3.client('s3')
-bucket_name = os.environ['BUCKET_NAME']
-
-# バージョン付きオブジェクトを一つずつ削除
-print("バージョン付きオブジェクトを削除中...")
-try:
-    versions = s3_client.list_object_versions(Bucket=bucket_name)
-    
-    # 通常のバージョンを削除
-    if 'Versions' in versions:
-        for version in versions.get('Versions', []):
-            print(f"削除: {version['Key']} (バージョン: {version['VersionId']})")
-            s3_client.delete_object(
-                Bucket=bucket_name,
-                Key=version['Key'],
-                VersionId=version['VersionId']
-            )
-    
-    # 削除マーカーを削除
-    if 'DeleteMarkers' in versions:
-        for marker in versions.get('DeleteMarkers', []):
-            print(f"削除マーカーを削除: {marker['Key']} (バージョン: {marker['VersionId']})")
-            s3_client.delete_object(
-                Bucket=bucket_name,
-                Key=marker['Key'],
-                VersionId=marker['VersionId']
-            )
-except Exception as e:
-    print(f"バケット削除中にエラーが発生しました: {e}")
-
-print("バケット内のオブジェクトの削除が完了しました")
-EOF_PYTHON
-
-                # スクリプトを実行
-                BUCKET_NAME=${BUCKET_NAME} python3 /tmp/empty_bucket.py
+                python scripts/empty_s3_bucket.py ${BUCKET_NAME}
                 
                 # 通常のオブジェクトも念のため削除
                 aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
@@ -357,48 +235,7 @@ EOF_PYTHON
             BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
             if [ -n "$BUCKET_NAME" ]; then
               echo "S3バケット ${BUCKET_NAME} を完全に空にします..."
-              
-              # Python スクリプトを一時ファイルに書き出して実行
-              cat > /tmp/empty_bucket.py << 'EOF_PYTHON'
-import boto3
-import json
-import os
-
-s3_client = boto3.client('s3')
-bucket_name = os.environ['BUCKET_NAME']
-
-# バージョン付きオブジェクトを一つずつ削除
-print("バージョン付きオブジェクトを削除中...")
-try:
-    versions = s3_client.list_object_versions(Bucket=bucket_name)
-    
-    # 通常のバージョンを削除
-    if 'Versions' in versions:
-        for version in versions.get('Versions', []):
-            print(f"削除: {version['Key']} (バージョン: {version['VersionId']})")
-            s3_client.delete_object(
-                Bucket=bucket_name,
-                Key=version['Key'],
-                VersionId=version['VersionId']
-            )
-    
-    # 削除マーカーを削除
-    if 'DeleteMarkers' in versions:
-        for marker in versions.get('DeleteMarkers', []):
-            print(f"削除マーカーを削除: {marker['Key']} (バージョン: {marker['VersionId']})")
-            s3_client.delete_object(
-                Bucket=bucket_name,
-                Key=marker['Key'],
-                VersionId=marker['VersionId']
-            )
-except Exception as e:
-    print(f"バケット削除中にエラーが発生しました: {e}")
-
-print("バケット内のオブジェクトの削除が完了しました")
-EOF_PYTHON
-
-              # スクリプトを実行
-              BUCKET_NAME=${BUCKET_NAME} python3 /tmp/empty_bucket.py
+              python scripts/empty_s3_bucket.py ${BUCKET_NAME}
               
               # 通常のオブジェクトも念のため削除
               aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
