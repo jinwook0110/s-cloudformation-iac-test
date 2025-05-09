@@ -38,11 +38,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-northeast-1
       
-      - name: 選択したアクションの確認
-        run: |
-          echo "選択したアクション: ${{ github.event.inputs.action || 'update' }}"
-          echo "イベント名: ${{ github.event_name }}"
-      
       - name: Lambda関数のパッケージ化とアップロード
         if: github.event.inputs.action != 'delete'
         run: |
@@ -66,83 +61,103 @@ jobs:
           
           echo "CODE_BUCKET=${CODE_BUCKET}" >> $GITHUB_ENV
       
-      - name: 既存スタックの確認と削除
-        if: github.event.inputs.action == 'create'
+      - name: スタック状態の確認とクリーンアップ
         run: |
-          STACK_NAME="s-Cfn-Iac01"
+          STACK_NAME="demo-stack"
           
-          # スタックが存在するか確認
-          if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>&1 | grep -q 'Stack with id'; then
-            echo "スタックが存在しないため、削除をスキップします。"
+          # スタックの状態を確認
+          if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
+            STACK_STATUS=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].StackStatus" --output text)
+            echo "現在のスタック状態: ${STACK_STATUS}"
+            
+            # ROLLBACK_COMPLETEやその他の失敗状態の場合は削除
+            if [[ "${STACK_STATUS}" == *ROLLBACK_COMPLETE* || "${STACK_STATUS}" == *FAILED* ]]; then
+              echo "スタックが失敗状態（${STACK_STATUS}）のため削除します"
+              aws cloudformation delete-stack --stack-name ${STACK_NAME}
+              echo "スタック削除の完了を待機中..."
+              aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME}
+            fi
+            
+            # create操作の場合は既存スタックを削除
+            if [[ "${{ github.event.inputs.action }}" == "create" ]]; then
+              echo "create操作のため既存スタックを削除します"
+              aws cloudformation delete-stack --stack-name ${STACK_NAME}
+              echo "スタック削除の完了を待機中..."
+              aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME}
+            fi
           else
-            echo "既存のスタックを削除します: ${STACK_NAME}"
-            aws cloudformation delete-stack --stack-name ${STACK_NAME}
-            echo "スタックの削除完了を待機中..."
-            aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME}
+            echo "スタック ${STACK_NAME} は存在しません"
           fi
           
-          # demo-stackも確認して削除
-          if aws cloudformation describe-stacks --stack-name demo-stack 2>&1 | grep -q 'Stack with id'; then
-            echo "スタックが存在しないため、削除をスキップします: demo-stack"
+          # 古いs-Cfn-Iac01スタックがあれば削除
+          if aws cloudformation describe-stacks --stack-name s-Cfn-Iac01 2>/dev/null; then
+            echo "古いs-Cfn-Iac01スタックを削除します"
+            aws cloudformation delete-stack --stack-name s-Cfn-Iac01
+            echo "s-Cfn-Iac01削除の完了を待機中..."
+            aws cloudformation wait stack-delete-complete --stack-name s-Cfn-Iac01
           else
-            echo "既存のスタックを削除します: demo-stack"
-            aws cloudformation delete-stack --stack-name demo-stack
-            echo "スタックの削除完了を待機中..."
-            aws cloudformation wait stack-delete-complete --stack-name demo-stack
+            echo "s-Cfn-Iac01スタックは存在しません"
           fi
       
-      - name: CloudFormationスタックの作成
-        if: github.event.inputs.action == 'create'
+      - name: CloudFormation テンプレートの検証
         run: |
-          echo "CloudFormationスタックを作成します..."
-          aws cloudformation create-stack \
-            --stack-name s-Cfn-Iac01 \
-            --template-body file://infrastructure/cloudformation/template.yaml \
-            --parameters ParameterKey=CodeBucket,ParameterValue=${CODE_BUCKET} \
-            --capabilities CAPABILITY_NAMED_IAM
-          
-          echo "スタック作成完了を待機中..."
-          aws cloudformation wait stack-create-complete --stack-name s-Cfn-Iac01
-          
-      - name: CloudFormationスタックの更新
-        if: github.event.inputs.action == 'update' || github.event_name == 'push'
+          echo "CloudFormationテンプレートを検証中..."
+          aws cloudformation validate-template --template-body file://infrastructure/cloudformation/template.yaml
+      
+      - name: CloudFormationスタックの作成/更新
+        if: github.event.inputs.action != 'delete'
         run: |
+          STACK_NAME="demo-stack"
+          
           # スタックが存在するか確認
-          if aws cloudformation describe-stacks --stack-name s-Cfn-Iac01 2>&1 | grep -q 'Stack with id'; then
-            echo "スタックが存在しないため、更新の代わりに作成します。"
+          if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
+            echo "既存のスタックを更新します..."
+            # 更新に失敗した場合（変更がない場合など）のためのエラーハンドリング
+            if ! aws cloudformation update-stack \
+              --stack-name ${STACK_NAME} \
+              --template-body file://infrastructure/cloudformation/template.yaml \
+              --parameters ParameterKey=CodeBucket,ParameterValue=${CODE_BUCKET} \
+              --capabilities CAPABILITY_NAMED_IAM; then
+              echo "スタックの更新がスキップされました。おそらく変更がありません。"
+            else
+              echo "スタック更新完了を待機中..."
+              aws cloudformation wait stack-update-complete --stack-name ${STACK_NAME}
+            fi
+          else
+            echo "新しいスタックを作成します..."
             aws cloudformation create-stack \
-              --stack-name s-Cfn-Iac01 \
+              --stack-name ${STACK_NAME} \
               --template-body file://infrastructure/cloudformation/template.yaml \
               --parameters ParameterKey=CodeBucket,ParameterValue=${CODE_BUCKET} \
               --capabilities CAPABILITY_NAMED_IAM
             
             echo "スタック作成完了を待機中..."
-            aws cloudformation wait stack-create-complete --stack-name s-Cfn-Iac01
-          else
-            echo "既存のスタックを更新します..."
-            # 更新に失敗した場合（変更がない場合など）のためのエラーハンドリング
-            aws cloudformation update-stack \
-              --stack-name s-Cfn-Iac01 \
-              --template-body file://infrastructure/cloudformation/template.yaml \
-              --parameters ParameterKey=CodeBucket,ParameterValue=${CODE_BUCKET} \
-              --capabilities CAPABILITY_NAMED_IAM || echo "スタックの更新がスキップされました。おそらく変更がありません。"
-            
-            # 更新が行われた場合のみ待機
-            if [ $? -eq 0 ]; then
-              echo "スタック更新完了を待機中..."
-              aws cloudformation wait stack-update-complete --stack-name s-Cfn-Iac01
-            fi
+            aws cloudformation wait stack-create-complete --stack-name ${STACK_NAME}
           fi
-          
+      
       - name: CloudFormationスタックの削除
         if: github.event.inputs.action == 'delete'
         run: |
-          # s-Cfn-Iac01スタックの削除
-          echo "s-Cfn-Iac01スタックを削除します..."
-          aws cloudformation delete-stack --stack-name s-Cfn-Iac01 || echo "s-Cfn-Iac01スタックの削除に失敗しました。"
-          aws cloudformation wait stack-delete-complete --stack-name s-Cfn-Iac01 || echo "s-Cfn-Iac01スタック削除待機に失敗しました。"
+          # demo-stackスタックの削除
+          if aws cloudformation describe-stacks --stack-name demo-stack 2>/dev/null; then
+            echo "demo-stackスタックを削除します..."
+            aws cloudformation delete-stack --stack-name demo-stack
+            aws cloudformation wait stack-delete-complete --stack-name demo-stack
+          else
+            echo "demo-stackスタックは存在しません"
+          fi
           
-          # demo-stackの削除も試みる
-          echo "demo-stackスタックを削除します..."
-          aws cloudformation delete-stack --stack-name demo-stack || echo "demo-stackスタックの削除に失敗しました。"
-          aws cloudformation wait stack-delete-complete --stack-name demo-stack || echo "demo-stack削除待機に失敗しました。"
+          # s-Cfn-Iac01スタックの削除も試みる
+          if aws cloudformation describe-stacks --stack-name s-Cfn-Iac01 2>/dev/null; then
+            echo "s-Cfn-Iac01スタックを削除します..."
+            aws cloudformation delete-stack --stack-name s-Cfn-Iac01
+            aws cloudformation wait stack-delete-complete --stack-name s-Cfn-Iac01
+          else
+            echo "s-Cfn-Iac01スタックは存在しません"
+          fi
+          
+      - name: デプロイ結果の確認
+        if: github.event.inputs.action != 'delete' && success()
+        run: |
+          echo "デプロイ結果を確認中..."
+          aws cloudformation describe-stacks --stack-name demo-stack --query "Stacks[0].{Status:StackStatus, Outputs:Outputs}" --output yaml
