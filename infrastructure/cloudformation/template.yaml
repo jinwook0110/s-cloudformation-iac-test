@@ -182,7 +182,7 @@ Resources:
       SecurityGroupIds:
         - !GetAtt EC2SecurityGroup.GroupId
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
-      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]
+      ImageId: !GetAtt AmazonLinux2AMI.ImageId
       IamInstanceProfile: !Ref EC2InstanceProfile
       Tags:
         - Key: Name
@@ -196,14 +196,96 @@ Resources:
           systemctl enable httpd
           echo "<html><h1>Hello from CloudFormation IaC!</h1></html>" > /var/www/html/index.html
 
-Mappings:
-  RegionMap:
-    ap-northeast-1:
-      AMI: ami-072bfb8ae2c884cc4  # Amazon Linux 2 AMI in Tokyo region
-    us-east-1:
-      AMI: ami-0cff7528ff583bf9a  # Amazon Linux 2 AMI in N. Virginia
-    us-west-2:
-      AMI: ami-0ca285d4c2cda3300  # Amazon Linux 2 AMI in Oregon
+  # 最新のAmazon Linux 2 AMIを取得するカスタムリソース
+  AmazonLinux2AMI:
+    Type: Custom::AMIInfo
+    Properties:
+      ServiceToken: !GetAtt AMIInfoFunction.Arn
+      Region: !Ref "AWS::Region"
+
+  # AMI情報を取得するLambda関数
+  AMIInfoFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt AMIInfoFunctionRole.Arn
+      Runtime: nodejs16.x
+      Timeout: 30
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const response = require('cfn-response');
+          
+          exports.handler = (event, context) => {
+            console.log('REQUEST RECEIVED:\\n', JSON.stringify(event));
+            
+            if (event.RequestType === 'Delete') {
+              return response.send(event, context, response.SUCCESS, {});
+            }
+            
+            const region = event.ResourceProperties.Region;
+            const ec2 = new AWS.EC2({ region: region });
+            
+            const params = {
+              Filters: [
+                {
+                  Name: 'name',
+                  Values: ['amzn2-ami-hvm-*-x86_64-gp2']
+                },
+                {
+                  Name: 'state',
+                  Values: ['available']
+                },
+                {
+                  Name: 'owner-alias',
+                  Values: ['amazon']
+                }
+              ]
+            };
+            
+            ec2.describeImages(params, (err, data) => {
+              if (err) {
+                console.log(err);
+                return response.send(event, context, response.FAILED, { Error: err });
+              }
+              
+              // Sort the images by creation date - newest first
+              const sortedImages = data.Images.sort((a, b) => {
+                return new Date(b.CreationDate) - new Date(a.CreationDate);
+              });
+              
+              const amiId = sortedImages[0].ImageId;
+              console.log(`Latest Amazon Linux 2 AMI ID: ${amiId}`);
+              
+              const responseData = {
+                ImageId: amiId
+              };
+              
+              response.send(event, context, response.SUCCESS, responseData);
+            });
+          };
+
+  # AMI情報Lambda用のIAMロール
+  AMIInfoFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EC2DescribeImagesPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ec2:DescribeImages
+                Resource: '*'
 
 Outputs:
   S3BucketName:
