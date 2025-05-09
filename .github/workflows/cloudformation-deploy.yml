@@ -146,4 +146,3 @@ jobs:
           echo "demo-stackスタックを削除します..."
           aws cloudformation delete-stack --stack-name demo-stack || echo "demo-stackスタックの削除に失敗しました。"
           aws cloudformation wait stack-delete-complete --stack-name demo-stack || echo "demo-stack削除待機に失敗しました。"
-EOF
