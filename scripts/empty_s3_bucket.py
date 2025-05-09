@@ -1,13 +1,28 @@
 #!/usr/bin/env python3
 import boto3
 import sys
-import os
+import botocore
 
 def empty_bucket(bucket_name):
+    if not bucket_name:
+        print("エラー: バケット名が指定されていません")
+        return False
+        
     print(f"バケット {bucket_name} のすべてのオブジェクトとバージョンを削除します...")
     s3_client = boto3.client('s3')
     
     try:
+        # バケットが存在するか確認
+        try:
+            s3_client.head_bucket(Bucket=bucket_name)
+        except botocore.exceptions.ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code')
+            if error_code == '404' or error_code == 'NoSuchBucket':
+                print(f"バケット {bucket_name} は存在しません")
+                return True
+            else:
+                raise e
+        
         # バケット内のすべてのバージョンとマーカーを取得
         versions = s3_client.list_object_versions(Bucket=bucket_name)
         
@@ -34,9 +49,14 @@ def empty_bucket(bucket_name):
         print(f"バケット {bucket_name} のクリーンアップが完了しました。")
         return True
         
-    except Exception as e:
-        print(f"エラーが発生しました: {e}")
-        return False
+    except botocore.exceptions.ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code')
+        if error_code == 'NoSuchBucket':
+            print(f"バケット {bucket_name} は存在しません")
+            return True
+        else:
+            print(f"エラーが発生しました: {e}")
+            return False
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
