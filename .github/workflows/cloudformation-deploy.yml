@@ -18,11 +18,7 @@ on:
           - create
           - update
           - delete
-      keyName:
-        description: 'EC2キーペア名（空白でキーペアなし）'
-        required: false
-        default: ''
-        type: string
+          - force-delete
 
 jobs:
   deploy:
@@ -43,8 +39,40 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-northeast-1
       
+      - name: 強制削除処理
+        if: github.event.inputs.action == 'force-delete'
+        run: |
+          STACK_NAME="demo-stack"
+          
+          # スタックが存在するか確認
+          if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
+            echo "既存のスタックを強制削除します..."
+            
+            # すべてのリソースを削除
+            echo "S3バケットを空にします..."
+            BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
+            if [ -n "$BUCKET_NAME" ]; then
+              aws s3 rm s3://${BUCKET_NAME} --recursive || true
+            fi
+            
+            # スタックの削除
+            aws cloudformation delete-stack --stack-name ${STACK_NAME}
+            echo "スタック削除の完了を待機中..."
+            aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME} || true
+            
+            # 削除に失敗した場合
+            if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
+              echo "スタックの削除に失敗しました。AWSコンソールから手動で削除してください。"
+              exit 1
+            fi
+          else
+            echo "スタック ${STACK_NAME} は存在しません"
+          fi
+          
+          exit 0
+      
       - name: Lambda関数のパッケージ化とアップロード
-        if: github.event.inputs.action != 'delete'
+        if: github.event.inputs.action != 'delete' && github.event.inputs.action != 'force-delete'
         run: |
           cd lambda_functions/text_to_s3/
           zip -r ../text_to_s3.zip *
@@ -67,6 +95,7 @@ jobs:
           echo "CODE_BUCKET=${CODE_BUCKET}" >> $GITHUB_ENV
       
       - name: スタック状態の確認とクリーンアップ
+        if: github.event.inputs.action != 'force-delete'
         run: |
           STACK_NAME="demo-stack"
           
@@ -88,49 +117,60 @@ jobs:
             # ROLLBACK_COMPLETEやその他の失敗状態の場合は削除
             if [[ "${STACK_STATUS}" == *ROLLBACK_COMPLETE* || "${STACK_STATUS}" == *FAILED* ]]; then
               echo "スタックが失敗状態（${STACK_STATUS}）のため削除します"
+              
+              # 削除に先立ってS3バケットを空にする
+              BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
+              if [ -n "$BUCKET_NAME" ]; then
+                echo "S3バケット ${BUCKET_NAME} を空にします..."
+                aws s3 rm s3://${BUCKET_NAME} --recursive || true
+              fi
+              
               aws cloudformation delete-stack --stack-name ${STACK_NAME}
               echo "スタック削除の完了を待機中..."
-              aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME}
+              aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME} || true
+              
+              # 削除に失敗した場合
+              if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
+                echo "スタックの削除に失敗しました。再試行が必要です。"
+                exit 1
+              fi
             fi
             
             # create操作の場合は既存スタックを削除
             if [[ "${{ github.event.inputs.action }}" == "create" ]]; then
               echo "create操作のため既存スタックを削除します"
+              
+              # 削除に先立ってS3バケットを空にする
+              BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
+              if [ -n "$BUCKET_NAME" ]; then
+                echo "S3バケット ${BUCKET_NAME} を空にします..."
+                aws s3 rm s3://${BUCKET_NAME} --recursive || true
+              fi
+              
               aws cloudformation delete-stack --stack-name ${STACK_NAME}
               echo "スタック削除の完了を待機中..."
-              aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME}
+              aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME} || true
+              
+              # 削除に失敗した場合
+              if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
+                echo "スタックの削除に失敗しました。手動で削除してから再試行してください。"
+                exit 1
+              fi
             fi
           else
             echo "スタック ${STACK_NAME} は存在しません"
           fi
-          
-          # 古いs-Cfn-Iac01スタックがあれば削除
-          if aws cloudformation describe-stacks --stack-name s-Cfn-Iac01 2>/dev/null; then
-            echo "古いs-Cfn-Iac01スタックを削除します"
-            aws cloudformation delete-stack --stack-name s-Cfn-Iac01
-            echo "s-Cfn-Iac01削除の完了を待機中..."
-            aws cloudformation wait stack-delete-complete --stack-name s-Cfn-Iac01
-          else
-            echo "s-Cfn-Iac01スタックは存在しません"
-          fi
       
       - name: CloudFormation テンプレートの検証
+        if: github.event.inputs.action != 'delete' && github.event.inputs.action != 'force-delete'
         run: |
           echo "CloudFormationテンプレートを検証中..."
           aws cloudformation validate-template --template-body file://infrastructure/cloudformation/template.yaml
       
       - name: CloudFormationスタックの作成/更新
-        if: github.event.inputs.action != 'delete'
+        if: github.event.inputs.action != 'delete' && github.event.inputs.action != 'force-delete'
         run: |
           STACK_NAME="demo-stack"
-          KEY_NAME="${{ github.event.inputs.keyName }}"
-          
-          # パラメータ設定
-          if [ -n "$KEY_NAME" ]; then
-            PARAMS="ParameterKey=CodeBucket,ParameterValue=${CODE_BUCKET} ParameterKey=KeyName,ParameterValue=${KEY_NAME}"
-          else
-            PARAMS="ParameterKey=CodeBucket,ParameterValue=${CODE_BUCKET}"
-          fi
           
           # スタックが存在するか確認
           if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
@@ -139,7 +179,7 @@ jobs:
             if ! aws cloudformation update-stack \
               --stack-name ${STACK_NAME} \
               --template-body file://infrastructure/cloudformation/template.yaml \
-              --parameters ${PARAMS} \
+              --parameters ParameterKey=CodeBucket,ParameterValue=${CODE_BUCKET} \
               --capabilities CAPABILITY_NAMED_IAM; then
               echo "スタックの更新がスキップされました。おそらく変更がありません。"
             else
@@ -159,7 +199,7 @@ jobs:
             aws cloudformation create-stack \
               --stack-name ${STACK_NAME} \
               --template-body file://infrastructure/cloudformation/template.yaml \
-              --parameters ${PARAMS} \
+              --parameters ParameterKey=CodeBucket,ParameterValue=${CODE_BUCKET} \
               --capabilities CAPABILITY_NAMED_IAM
             
             echo "スタック作成完了を待機中..."
@@ -177,26 +217,33 @@ jobs:
       - name: CloudFormationスタックの削除
         if: github.event.inputs.action == 'delete'
         run: |
-          # demo-stackスタックの削除
-          if aws cloudformation describe-stacks --stack-name demo-stack 2>/dev/null; then
-            echo "demo-stackスタックを削除します..."
-            aws cloudformation delete-stack --stack-name demo-stack
-            aws cloudformation wait stack-delete-complete --stack-name demo-stack
-          else
-            echo "demo-stackスタックは存在しません"
-          fi
+          STACK_NAME="demo-stack"
           
-          # s-Cfn-Iac01スタックの削除も試みる
-          if aws cloudformation describe-stacks --stack-name s-Cfn-Iac01 2>/dev/null; then
-            echo "s-Cfn-Iac01スタックを削除します..."
-            aws cloudformation delete-stack --stack-name s-Cfn-Iac01
-            aws cloudformation wait stack-delete-complete --stack-name s-Cfn-Iac01
+          # スタックが存在するか確認
+          if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
+            # 削除に先立ってS3バケットを空にする
+            BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
+            if [ -n "$BUCKET_NAME" ]; then
+              echo "S3バケット ${BUCKET_NAME} を空にします..."
+              aws s3 rm s3://${BUCKET_NAME} --recursive || true
+            fi
+            
+            echo "スタックを削除します..."
+            aws cloudformation delete-stack --stack-name ${STACK_NAME}
+            echo "スタック削除の完了を待機中..."
+            aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME} || true
+            
+            # 削除に失敗した場合
+            if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
+              echo "スタックの削除に失敗しました。force-deleteオプションを使用してください。"
+              exit 1
+            fi
           else
-            echo "s-Cfn-Iac01スタックは存在しません"
+            echo "スタック ${STACK_NAME} は存在しません"
           fi
           
       - name: デプロイ結果の確認
-        if: github.event.inputs.action != 'delete' && success()
+        if: github.event.inputs.action != 'delete' && github.event.inputs.action != 'force-delete' && success()
         run: |
           echo "デプロイ結果を確認中..."
           aws cloudformation describe-stacks --stack-name demo-stack --query "Stacks[0].{Status:StackStatus, Outputs:Outputs}" --output yaml
