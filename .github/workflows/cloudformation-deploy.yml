@@ -53,12 +53,14 @@ jobs:
             
             # S3バケットを完全に空にする
             BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
-            if [ -n "$BUCKET_NAME" ]; then
+            if [ -n "$BUCKET_NAME" ] && [ "$BUCKET_NAME" != "None" ]; then
               echo "S3バケット ${BUCKET_NAME} を完全に空にします..."
               python scripts/empty_s3_bucket.py ${BUCKET_NAME}
               
               # 通常のオブジェクトも念のため削除
               aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
+            else
+              echo "バケット名が取得できないか、Noneです。バケットのクリーンアップをスキップします。"
             fi
             
             # スタックの削除
@@ -66,7 +68,7 @@ jobs:
             echo "スタック削除の完了を待機中..."
             aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME} || true
             
-            # 削除に失敗した場合、バケットを手動で削除
+            # 削除に失敗した場合
             if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
               echo "スタックの削除に失敗しました。AWSコンソールから手動で削除してください。"
               exit 1
@@ -124,12 +126,14 @@ jobs:
               
               # 削除に先立ってS3バケットを完全に空にする
               BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
-              if [ -n "$BUCKET_NAME" ]; then
+              if [ -n "$BUCKET_NAME" ] && [ "$BUCKET_NAME" != "None" ]; then
                 echo "S3バケット ${BUCKET_NAME} を完全に空にします..."
                 python scripts/empty_s3_bucket.py ${BUCKET_NAME}
                 
                 # 通常のオブジェクトも念のため削除
                 aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
+              else
+                echo "バケット名が取得できないか、Noneです。バケットのクリーンアップをスキップします。"
               fi
               
               aws cloudformation delete-stack --stack-name ${STACK_NAME}
@@ -149,12 +153,14 @@ jobs:
               
               # 削除に先立ってS3バケットを完全に空にする
               BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
-              if [ -n "$BUCKET_NAME" ]; then
+              if [ -n "$BUCKET_NAME" ] && [ "$BUCKET_NAME" != "None" ]; then
                 echo "S3バケット ${BUCKET_NAME} を完全に空にします..."
                 python scripts/empty_s3_bucket.py ${BUCKET_NAME}
                 
                 # 通常のオブジェクトも念のため削除
                 aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
+              else
+                echo "バケット名が取得できないか、Noneです。バケットのクリーンアップをスキップします。"
               fi
               
               aws cloudformation delete-stack --stack-name ${STACK_NAME}
@@ -233,12 +239,14 @@ jobs:
           if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
             # 削除に先立ってS3バケットを完全に空にする
             BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
-            if [ -n "$BUCKET_NAME" ]; then
+            if [ -n "$BUCKET_NAME" ] && [ "$BUCKET_NAME" != "None" ]; then
               echo "S3バケット ${BUCKET_NAME} を完全に空にします..."
               python scripts/empty_s3_bucket.py ${BUCKET_NAME}
               
               # 通常のオブジェクトも念のため削除
               aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
+            else
+              echo "バケット名が取得できないか、Noneです。バケットのクリーンアップをスキップします。"
             fi
             
             echo "スタックを削除します..."

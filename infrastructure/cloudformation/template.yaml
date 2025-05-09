@@ -6,11 +6,6 @@ Parameters:
     Type: String
     Description: S3 bucket containing Lambda function code
 
-Mappings:
-  RegionMap:
-    ap-northeast-1:
-      AMI: ami-07bff4033fbfe2317  
-
 Resources:
   # S3バケット
   DemoBucket:
@@ -174,14 +169,14 @@ Resources:
       Roles:
         - !Ref EC2InstanceRole
 
-  # EC2インスタンス
+  # EC2インスタンス - SSMパラメータストアを使用して最新のAMIを取得
   EC2Instance:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: t2.micro
       SecurityGroupIds:
         - !GetAtt EC2SecurityGroup.GroupId
-      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]
+      ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2}}'
       IamInstanceProfile: !Ref EC2InstanceProfile
       Tags:
         - Key: Name
