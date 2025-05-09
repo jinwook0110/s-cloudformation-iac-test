@@ -1,10 +1,17 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'IaC demo with S3 and Step Functions'
+Description: 'IaC demo with S3, Step Functions and EC2'
 
 Parameters:
   CodeBucket:
     Type: String
     Description: S3 bucket containing Lambda function code
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Default: ""
+    
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
 
 Resources:
   # S3バケット
@@ -41,7 +48,7 @@ Resources:
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambda_functions/text_to_s3.zip
-      Timeout: 60
+      Timeout: 30
       Environment:
         Variables:
           BUCKET_NAME: !Ref DemoBucket
@@ -57,7 +64,7 @@ Resources:
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambda_functions/numbers_1_to_1000.zip
-      Timeout: 60
+      Timeout: 30
 
   # Lambda関数3: 1001〜2000を出力
   Numbers1001To2000Function:
@@ -70,7 +77,7 @@ Resources:
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambda_functions/numbers_1001_to_2000.zip
-      Timeout: 60
+      Timeout: 30
 
   # Step Functions実行用のIAMロール
   StepFunctionExecutionRole:
@@ -131,6 +138,73 @@ Resources:
           }
         }
 
+  # EC2インスタンス用のセキュリティグループ
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # EC2インスタンス用のIAMロール
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+  # EC2インスタンスプロファイル
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # EC2インスタンス
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      SecurityGroupIds:
+        - !GetAtt EC2SecurityGroup.GroupId
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      Tags:
+        - Key: Name
+          Value: suicatest-cfn-iac-test01
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "<html><h1>Hello from CloudFormation IaC!</h1></html>" > /var/www/html/index.html
+
+Mappings:
+  RegionMap:
+    ap-northeast-1:
+      AMI: ami-072bfb8ae2c884cc4  # Amazon Linux 2 AMI in Tokyo region
+    us-east-1:
+      AMI: ami-0cff7528ff583bf9a  # Amazon Linux 2 AMI in N. Virginia
+    us-west-2:
+      AMI: ami-0ca285d4c2cda3300  # Amazon Linux 2 AMI in Oregon
+
 Outputs:
   S3BucketName:
     Description: Name of the created S3 bucket
@@ -138,3 +212,12 @@ Outputs:
   StateMachineArn:
     Description: ARN of the Step Functions state machine
     Value: !Ref DemoStateMachine
+  EC2InstanceId:
+    Description: ID of the EC2 instance
+    Value: !Ref EC2Instance
+  EC2PublicIP:
+    Description: Public IP address of the EC2 instance
+    Value: !GetAtt EC2Instance.PublicIp
+  EC2PublicDNS:
+    Description: Public DNS name of the EC2 instance
+    Value: !GetAtt EC2Instance.PublicDnsName
