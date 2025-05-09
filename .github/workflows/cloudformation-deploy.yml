@@ -53,15 +53,26 @@ jobs:
             if [ -n "$BUCKET_NAME" ]; then
               echo "S3バケット ${BUCKET_NAME} を完全に空にします（すべてのバージョンを含む）..."
               
-              # バケット内のすべてのオブジェクトとバージョンを削除
-              aws s3api list-object-versions --bucket ${BUCKET_NAME} --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}} + DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json > /tmp/delete_keys.json
+              # バケット内のすべてのオブジェクトバージョンを削除
+              echo "すべてのバージョンを削除中..."
               
-              # 削除マーカーとバージョンを確認
-              if [ -s /tmp/delete_keys.json ] && [ "$(cat /tmp/delete_keys.json)" != "{}" ]; then
-                echo "すべてのオブジェクトバージョンを削除します..."
-                aws s3api delete-objects --bucket ${BUCKET_NAME} --delete file:///tmp/delete_keys.json || true
-              else
-                echo "バケットは既に空です。"
+              # 修正: バージョンとマーカーを別々に処理
+              # バージョンの取得と削除
+              VERSIONS=$(aws s3api list-object-versions --bucket ${BUCKET_NAME} --query "Versions[].{Key:Key,VersionId:VersionId}" --output json)
+              if [ -n "$VERSIONS" ] && [ "$VERSIONS" != "[]" ]; then
+                echo "$VERSIONS" > /tmp/versions.json
+                echo "バージョンを削除:"
+                cat /tmp/versions.json
+                aws s3api delete-objects --bucket ${BUCKET_NAME} --delete "Objects=$(echo $VERSIONS | sed 's/\[//' | sed 's/\]//')" || true
+              fi
+              
+              # 削除マーカーの取得と削除
+              DELETE_MARKERS=$(aws s3api list-object-versions --bucket ${BUCKET_NAME} --query "DeleteMarkers[].{Key:Key,VersionId:VersionId}" --output json)
+              if [ -n "$DELETE_MARKERS" ] && [ "$DELETE_MARKERS" != "[]" ]; then
+                echo "$DELETE_MARKERS" > /tmp/markers.json
+                echo "削除マーカーを削除:"
+                cat /tmp/markers.json
+                aws s3api delete-objects --bucket ${BUCKET_NAME} --delete "Objects=$(echo $DELETE_MARKERS | sed 's/\[//' | sed 's/\]//')" || true
               fi
               
               # 通常のオブジェクトも念のため削除
@@ -73,15 +84,13 @@ jobs:
             echo "スタック削除の完了を待機中..."
             aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME} || true
             
-            # 削除に失敗した場合、バケットを手動で削除してから再試行
+            # 削除に失敗した場合、バケットを手動で削除
             if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
               echo "スタックの削除に失敗しました。S3バケットを手動で削除します..."
               if [ -n "$BUCKET_NAME" ]; then
-                # もう一度すべてのバージョンを削除して、バケット自体を削除
-                aws s3api list-object-versions --bucket ${BUCKET_NAME} --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}} + DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json > /tmp/delete_keys.json
-                if [ -s /tmp/delete_keys.json ] && [ "$(cat /tmp/delete_keys.json)" != "{}" ]; then
-                  aws s3api delete-objects --bucket ${BUCKET_NAME} --delete file:///tmp/delete_keys.json || true
-                fi
+                echo "バケットを手動で削除: ${BUCKET_NAME}"
+                
+                # バケットの内容を空にして削除
                 aws s3 rb s3://${BUCKET_NAME} --force || true
               fi
               
@@ -91,7 +100,7 @@ jobs:
               
               # それでも失敗する場合
               if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
-                echo "スタックの削除に再度失敗しました。AWSコンソールから手動で削除してください。"
+                echo "スタックの削除に再度失敗しました。AWS コンソールから手動で削除してください。"
                 exit 1
               fi
             fi
@@ -153,15 +162,17 @@ jobs:
               if [ -n "$BUCKET_NAME" ]; then
                 echo "S3バケット ${BUCKET_NAME} を完全に空にします（すべてのバージョンを含む）..."
                 
-                # バケット内のすべてのオブジェクトとバージョンを削除
-                aws s3api list-object-versions --bucket ${BUCKET_NAME} --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}} + DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json > /tmp/delete_keys.json
+                # バージョンとマーカーを別々に処理
+                # バージョンの取得と削除
+                VERSIONS=$(aws s3api list-object-versions --bucket ${BUCKET_NAME} --query "Versions[].{Key:Key,VersionId:VersionId}" --output json)
+                if [ -n "$VERSIONS" ] && [ "$VERSIONS" != "[]" ]; then
+                  aws s3api delete-objects --bucket ${BUCKET_NAME} --delete "Objects=$(echo $VERSIONS | sed 's/\[//' | sed 's/\]//')" || true
+                fi
                 
-                # 削除マーカーとバージョンを確認
-                if [ -s /tmp/delete_keys.json ] && [ "$(cat /tmp/delete_keys.json)" != "{}" ]; then
-                  echo "すべてのオブジェクトバージョンを削除します..."
-                  aws s3api delete-objects --bucket ${BUCKET_NAME} --delete file:///tmp/delete_keys.json || true
-                else
-                  echo "バケットは既に空です。"
+                # 削除マーカーの取得と削除
+                DELETE_MARKERS=$(aws s3api list-object-versions --bucket ${BUCKET_NAME} --query "DeleteMarkers[].{Key:Key,VersionId:VersionId}" --output json)
+                if [ -n "$DELETE_MARKERS" ] && [ "$DELETE_MARKERS" != "[]" ]; then
+                  aws s3api delete-objects --bucket ${BUCKET_NAME} --delete "Objects=$(echo $DELETE_MARKERS | sed 's/\[//' | sed 's/\]//')" || true
                 fi
                 
                 # 通常のオブジェクトも念のため削除
@@ -188,15 +199,16 @@ jobs:
               if [ -n "$BUCKET_NAME" ]; then
                 echo "S3バケット ${BUCKET_NAME} を完全に空にします（すべてのバージョンを含む）..."
                 
-                # バケット内のすべてのオブジェクトとバージョンを削除
-                aws s3api list-object-versions --bucket ${BUCKET_NAME} --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}} + DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json > /tmp/delete_keys.json
+                # バージョンの取得と削除
+                VERSIONS=$(aws s3api list-object-versions --bucket ${BUCKET_NAME} --query "Versions[].{Key:Key,VersionId:VersionId}" --output json)
+                if [ -n "$VERSIONS" ] && [ "$VERSIONS" != "[]" ]; then
+                  aws s3api delete-objects --bucket ${BUCKET_NAME} --delete "Objects=$(echo $VERSIONS | sed 's/\[//' | sed 's/\]//')" || true
+                fi
                 
-                # 削除マーカーとバージョンを確認
-                if [ -s /tmp/delete_keys.json ] && [ "$(cat /tmp/delete_keys.json)" != "{}" ]; then
-                  echo "すべてのオブジェクトバージョンを削除します..."
-                  aws s3api delete-objects --bucket ${BUCKET_NAME} --delete file:///tmp/delete_keys.json || true
-                else
-                  echo "バケットは既に空です。"
+                # 削除マーカーの取得と削除
+                DELETE_MARKERS=$(aws s3api list-object-versions --bucket ${BUCKET_NAME} --query "DeleteMarkers[].{Key:Key,VersionId:VersionId}" --output json)
+                if [ -n "$DELETE_MARKERS" ] && [ "$DELETE_MARKERS" != "[]" ]; then
+                  aws s3api delete-objects --bucket ${BUCKET_NAME} --delete "Objects=$(echo $DELETE_MARKERS | sed 's/\[//' | sed 's/\]//')" || true
                 fi
                 
                 # 通常のオブジェクトも念のため削除
@@ -282,15 +294,16 @@ jobs:
             if [ -n "$BUCKET_NAME" ]; then
               echo "S3バケット ${BUCKET_NAME} を完全に空にします（すべてのバージョンを含む）..."
               
-              # バケット内のすべてのオブジェクトとバージョンを削除
-              aws s3api list-object-versions --bucket ${BUCKET_NAME} --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}} + DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json > /tmp/delete_keys.json
+              # バージョンの取得と削除
+              VERSIONS=$(aws s3api list-object-versions --bucket ${BUCKET_NAME} --query "Versions[].{Key:Key,VersionId:VersionId}" --output json)
+              if [ -n "$VERSIONS" ] && [ "$VERSIONS" != "[]" ]; then
+                aws s3api delete-objects --bucket ${BUCKET_NAME} --delete "Objects=$(echo $VERSIONS | sed 's/\[//' | sed 's/\]//')" || true
+              fi
               
-              # 削除マーカーとバージョンを確認
-              if [ -s /tmp/delete_keys.json ] && [ "$(cat /tmp/delete_keys.json)" != "{}" ]; then
-                echo "すべてのオブジェクトバージョンを削除します..."
-                aws s3api delete-objects --bucket ${BUCKET_NAME} --delete file:///tmp/delete_keys.json || true
-              else
-                echo "バケットは既に空です。"
+              # 削除マーカーの取得と削除
+              DELETE_MARKERS=$(aws s3api list-object-versions --bucket ${BUCKET_NAME} --query "DeleteMarkers[].{Key:Key,VersionId:VersionId}" --output json)
+              if [ -n "$DELETE_MARKERS" ] && [ "$DELETE_MARKERS" != "[]" ]; then
+                aws s3api delete-objects --bucket ${BUCKET_NAME} --delete "Objects=$(echo $DELETE_MARKERS | sed 's/\[//' | sed 's/\]//')" || true
               fi
               
               # 通常のオブジェクトも念のため削除
