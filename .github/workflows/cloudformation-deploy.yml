@@ -48,11 +48,24 @@ jobs:
           if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
             echo "既存のスタックを強制削除します..."
             
-            # すべてのリソースを削除
-            echo "S3バケットを空にします..."
+            # S3バケットを完全に空にする
             BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
             if [ -n "$BUCKET_NAME" ]; then
-              aws s3 rm s3://${BUCKET_NAME} --recursive || true
+              echo "S3バケット ${BUCKET_NAME} を完全に空にします（すべてのバージョンを含む）..."
+              
+              # バケット内のすべてのオブジェクトとバージョンを削除
+              aws s3api list-object-versions --bucket ${BUCKET_NAME} --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}} + DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json > /tmp/delete_keys.json
+              
+              # 削除マーカーとバージョンを確認
+              if [ -s /tmp/delete_keys.json ] && [ "$(cat /tmp/delete_keys.json)" != "{}" ]; then
+                echo "すべてのオブジェクトバージョンを削除します..."
+                aws s3api delete-objects --bucket ${BUCKET_NAME} --delete file:///tmp/delete_keys.json || true
+              else
+                echo "バケットは既に空です。"
+              fi
+              
+              # 通常のオブジェクトも念のため削除
+              aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
             fi
             
             # スタックの削除
@@ -60,10 +73,27 @@ jobs:
             echo "スタック削除の完了を待機中..."
             aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME} || true
             
-            # 削除に失敗した場合
+            # 削除に失敗した場合、バケットを手動で削除してから再試行
             if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
-              echo "スタックの削除に失敗しました。AWSコンソールから手動で削除してください。"
-              exit 1
+              echo "スタックの削除に失敗しました。S3バケットを手動で削除します..."
+              if [ -n "$BUCKET_NAME" ]; then
+                # もう一度すべてのバージョンを削除して、バケット自体を削除
+                aws s3api list-object-versions --bucket ${BUCKET_NAME} --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}} + DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json > /tmp/delete_keys.json
+                if [ -s /tmp/delete_keys.json ] && [ "$(cat /tmp/delete_keys.json)" != "{}" ]; then
+                  aws s3api delete-objects --bucket ${BUCKET_NAME} --delete file:///tmp/delete_keys.json || true
+                fi
+                aws s3 rb s3://${BUCKET_NAME} --force || true
+              fi
+              
+              # 再度スタック削除を試行
+              aws cloudformation delete-stack --stack-name ${STACK_NAME}
+              aws cloudformation wait stack-delete-complete --stack-name ${STACK_NAME} || true
+              
+              # それでも失敗する場合
+              if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
+                echo "スタックの削除に再度失敗しました。AWSコンソールから手動で削除してください。"
+                exit 1
+              fi
             fi
           else
             echo "スタック ${STACK_NAME} は存在しません"
@@ -111,18 +141,31 @@ jobs:
             # ROLLBACK状態の場合はエラーの詳細を取得
             if [[ "${STACK_STATUS}" == *ROLLBACK* || "${STACK_STATUS}" == *FAILED* ]]; then
               echo "エラーイベントを検索中..."
-              aws cloudformation describe-stack-events --stack-name ${STACK_NAME} --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED'].{Resource:LogicalResourceId, Reason:ResourceStatusReason}" --output table
+              aws cloudformation describe-stack-events --stack-name ${STACK_NAME} --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED' || ResourceStatus=='DELETE_FAILED'].{Resource:LogicalResourceId, Reason:ResourceStatusReason}" --output table
             fi
             
             # ROLLBACK_COMPLETEやその他の失敗状態の場合は削除
             if [[ "${STACK_STATUS}" == *ROLLBACK_COMPLETE* || "${STACK_STATUS}" == *FAILED* ]]; then
               echo "スタックが失敗状態（${STACK_STATUS}）のため削除します"
               
-              # 削除に先立ってS3バケットを空にする
+              # 削除に先立ってS3バケットを完全に空にする
               BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
               if [ -n "$BUCKET_NAME" ]; then
-                echo "S3バケット ${BUCKET_NAME} を空にします..."
-                aws s3 rm s3://${BUCKET_NAME} --recursive || true
+                echo "S3バケット ${BUCKET_NAME} を完全に空にします（すべてのバージョンを含む）..."
+                
+                # バケット内のすべてのオブジェクトとバージョンを削除
+                aws s3api list-object-versions --bucket ${BUCKET_NAME} --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}} + DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json > /tmp/delete_keys.json
+                
+                # 削除マーカーとバージョンを確認
+                if [ -s /tmp/delete_keys.json ] && [ "$(cat /tmp/delete_keys.json)" != "{}" ]; then
+                  echo "すべてのオブジェクトバージョンを削除します..."
+                  aws s3api delete-objects --bucket ${BUCKET_NAME} --delete file:///tmp/delete_keys.json || true
+                else
+                  echo "バケットは既に空です。"
+                fi
+                
+                # 通常のオブジェクトも念のため削除
+                aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
               fi
               
               aws cloudformation delete-stack --stack-name ${STACK_NAME}
@@ -131,7 +174,7 @@ jobs:
               
               # 削除に失敗した場合
               if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
-                echo "スタックの削除に失敗しました。再試行が必要です。"
+                echo "スタックの削除に失敗しました。force-deleteオプションを使用してください。"
                 exit 1
               fi
             fi
@@ -140,11 +183,24 @@ jobs:
             if [[ "${{ github.event.inputs.action }}" == "create" ]]; then
               echo "create操作のため既存スタックを削除します"
               
-              # 削除に先立ってS3バケットを空にする
+              # 削除に先立ってS3バケットを完全に空にする
               BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
               if [ -n "$BUCKET_NAME" ]; then
-                echo "S3バケット ${BUCKET_NAME} を空にします..."
-                aws s3 rm s3://${BUCKET_NAME} --recursive || true
+                echo "S3バケット ${BUCKET_NAME} を完全に空にします（すべてのバージョンを含む）..."
+                
+                # バケット内のすべてのオブジェクトとバージョンを削除
+                aws s3api list-object-versions --bucket ${BUCKET_NAME} --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}} + DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json > /tmp/delete_keys.json
+                
+                # 削除マーカーとバージョンを確認
+                if [ -s /tmp/delete_keys.json ] && [ "$(cat /tmp/delete_keys.json)" != "{}" ]; then
+                  echo "すべてのオブジェクトバージョンを削除します..."
+                  aws s3api delete-objects --bucket ${BUCKET_NAME} --delete file:///tmp/delete_keys.json || true
+                else
+                  echo "バケットは既に空です。"
+                fi
+                
+                # 通常のオブジェクトも念のため削除
+                aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
               fi
               
               aws cloudformation delete-stack --stack-name ${STACK_NAME}
@@ -153,7 +209,7 @@ jobs:
               
               # 削除に失敗した場合
               if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
-                echo "スタックの削除に失敗しました。手動で削除してから再試行してください。"
+                echo "スタックの削除に失敗しました。force-deleteオプションを使用してください。"
                 exit 1
               fi
             fi
@@ -221,11 +277,24 @@ jobs:
           
           # スタックが存在するか確認
           if aws cloudformation describe-stacks --stack-name ${STACK_NAME} 2>/dev/null; then
-            # 削除に先立ってS3バケットを空にする
+            # 削除に先立ってS3バケットを完全に空にする
             BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='S3BucketName'].OutputValue" --output text)
             if [ -n "$BUCKET_NAME" ]; then
-              echo "S3バケット ${BUCKET_NAME} を空にします..."
-              aws s3 rm s3://${BUCKET_NAME} --recursive || true
+              echo "S3バケット ${BUCKET_NAME} を完全に空にします（すべてのバージョンを含む）..."
+              
+              # バケット内のすべてのオブジェクトとバージョンを削除
+              aws s3api list-object-versions --bucket ${BUCKET_NAME} --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}} + DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json > /tmp/delete_keys.json
+              
+              # 削除マーカーとバージョンを確認
+              if [ -s /tmp/delete_keys.json ] && [ "$(cat /tmp/delete_keys.json)" != "{}" ]; then
+                echo "すべてのオブジェクトバージョンを削除します..."
+                aws s3api delete-objects --bucket ${BUCKET_NAME} --delete file:///tmp/delete_keys.json || true
+              else
+                echo "バケットは既に空です。"
+              fi
+              
+              # 通常のオブジェクトも念のため削除
+              aws s3 rm s3://${BUCKET_NAME} --recursive --include "*" || true
             fi
             
             echo "スタックを削除します..."

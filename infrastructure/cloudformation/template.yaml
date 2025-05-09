@@ -10,6 +10,8 @@ Resources:
   # S3バケット
   DemoBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       BucketName: !Sub "demo-bucket-${AWS::AccountId}"
       VersioningConfiguration:
