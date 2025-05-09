@@ -41,7 +41,7 @@ Resources:
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambda_functions/text_to_s3.zip
-      Timeout: 30
+      Timeout: 60
       Environment:
         Variables:
           BUCKET_NAME: !Ref DemoBucket
@@ -57,7 +57,7 @@ Resources:
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambda_functions/numbers_1_to_1000.zip
-      Timeout: 30
+      Timeout: 60
 
   # Lambda関数3: 1001〜2000を出力
   Numbers1001To2000Function:
@@ -70,7 +70,7 @@ Resources:
       Code:
         S3Bucket: !Ref CodeBucket
         S3Key: lambda_functions/numbers_1001_to_2000.zip
-      Timeout: 30
+      Timeout: 60
 
   # Step Functions実行用のIAMロール
   StepFunctionExecutionRole:
