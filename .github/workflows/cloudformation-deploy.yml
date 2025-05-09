@@ -75,6 +75,16 @@ jobs:
             STACK_STATUS=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].StackStatus" --output text)
             echo "現在のスタック状態: ${STACK_STATUS}"
             
+            # スタックのイベントを確認して最近のエラーを表示
+            echo "最近のスタックイベント:"
+            aws cloudformation describe-stack-events --stack-name ${STACK_NAME} --query "StackEvents[0:5]" --output yaml
+            
+            # ROLLBACK状態の場合はエラーの詳細を取得
+            if [[ "${STACK_STATUS}" == *ROLLBACK* || "${STACK_STATUS}" == *FAILED* ]]; then
+              echo "エラーイベントを検索中..."
+              aws cloudformation describe-stack-events --stack-name ${STACK_NAME} --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED'].{Resource:LogicalResourceId, Reason:ResourceStatusReason}" --output table
+            fi
+            
             # ROLLBACK_COMPLETEやその他の失敗状態の場合は削除
             if [[ "${STACK_STATUS}" == *ROLLBACK_COMPLETE* || "${STACK_STATUS}" == *FAILED* ]]; then
               echo "スタックが失敗状態（${STACK_STATUS}）のため削除します"
@@ -134,7 +144,15 @@ jobs:
               echo "スタックの更新がスキップされました。おそらく変更がありません。"
             else
               echo "スタック更新完了を待機中..."
-              aws cloudformation wait stack-update-complete --stack-name ${STACK_NAME}
+              aws cloudformation wait stack-update-complete --stack-name ${STACK_NAME} || true
+              
+              # 更新状態を確認
+              STACK_STATUS=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].StackStatus" --output text)
+              if [[ "${STACK_STATUS}" == *ROLLBACK* ]]; then
+                echo "スタック更新に失敗しました。エラーイベントを表示します:"
+                aws cloudformation describe-stack-events --stack-name ${STACK_NAME} --query "StackEvents[?ResourceStatus=='UPDATE_FAILED'].{Resource:LogicalResourceId, Reason:ResourceStatusReason}" --output table
+                exit 1
+              fi
             fi
           else
             echo "新しいスタックを作成します..."
@@ -145,7 +163,15 @@ jobs:
               --capabilities CAPABILITY_NAMED_IAM
             
             echo "スタック作成完了を待機中..."
-            aws cloudformation wait stack-create-complete --stack-name ${STACK_NAME}
+            aws cloudformation wait stack-create-complete --stack-name ${STACK_NAME} || true
+            
+            # 作成状態を確認
+            STACK_STATUS=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].StackStatus" --output text)
+            if [[ "${STACK_STATUS}" == *ROLLBACK* ]]; then
+              echo "スタック作成に失敗しました。エラーイベントを表示します:"
+              aws cloudformation describe-stack-events --stack-name ${STACK_NAME} --query "StackEvents[?ResourceStatus=='CREATE_FAILED'].{Resource:LogicalResourceId, Reason:ResourceStatusReason}" --output table
+              exit 1
+            fi
           fi
       
       - name: CloudFormationスタックの削除
